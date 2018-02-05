@@ -1,0 +1,1 @@
+- Use sigmoid outputs for softmax
