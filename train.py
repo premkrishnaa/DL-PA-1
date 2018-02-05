@@ -3,6 +3,7 @@ import argparse
 import sets
 import numpy as np
 import pandas as pd
+import os, pickle
 
 # interact with code with `kill -SIGUSR2 <PID>`
 import code
@@ -107,7 +108,6 @@ def main():
 	
 	theta = init_theta()
 	
-	import os, pickle
 	global log_train_file, log_val_file, theta_pickle_file
 	log_train_file = open(os.path.join(expt_dir, "log_train.txt"), "w", 1)
 	log_val_file = open(os.path.join(expt_dir, "log_val.txt"), "w", 1)
