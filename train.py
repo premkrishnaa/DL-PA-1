@@ -4,6 +4,7 @@ import sets
 import numpy as np
 import pandas as pd
 import os, pickle
+import math
 
 # interact with code with `kill -SIGUSR2 <PID>`
 import code
@@ -113,7 +114,14 @@ def main():
 	log_val_file = open(os.path.join(expt_dir, "log_val.txt"), "w", 1)
 	theta_pickle_file = open(os.path.join(save_dir, "theta.pickle"), "w")
 
-	do_mini_batch_gradient_descent(X, Y)
+	if(opt == 'gd'):
+		do_mini_batch_gradient_descent(X, Y)
+	elif(opt == 'momentum'):
+		momentum_gradient_descent(X, Y)
+	elif(opt == 'nag'):
+		nag_gradient_descent(X, Y)
+	else:
+		adam_gradient_descent(X, Y)
 
 	pickle.dump(theta, theta_pickle_file)
 	log_train_file.close()
@@ -281,6 +289,20 @@ def init_d_theta():
 		d_theta[1].append(np.zeros(B_layer[j].shape))
 	return d_theta
 
+def init_adam_factors():
+	factors = [[], []]
+	for i in range(2):
+		factors[i].append(-1)
+	for j in xrange(1, L+1):
+		factors[0].append(0)
+		factors[1].append(0)
+	return factors
+
+def update_adam_factors(d_theta, factors):
+	for i in range(2):
+		for j in xrange(1, len(d_theta[i])):
+			factors[i][j] = np.square(d_theta[i][j]).sum()
+
 def add_and_set_theta(theta1, theta2):
 	for i in range(2):
 		for j in xrange(len(theta1[i])):
@@ -295,6 +317,11 @@ def scalar_mul_theta(theta, a):
 	for i in range(2):
 		for j in xrange(len(theta[i])):
 			theta[i][j] *= a;
+
+def adam_decay_scale(update, decay, epsilon):
+	for i in range(2):
+		for j in xrange(1, len(update[i])):
+			update[i][j] *= ( 1.0 / np.sqrt( epsilon + decay[i][j] ) );
 
 def do_mini_batch_gradient_descent(X, Y):
 	num_points_seen = 0
@@ -312,6 +339,104 @@ def do_mini_batch_gradient_descent(X, Y):
 	  			scalar_mul_theta(d_theta, lr)
 	  			sub_and_set_theta(theta, d_theta)
 	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % 100 == 0:
+		  			train_error, train_loss = calc_error_loss(X, Y)
+		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
+		pickle.dump(theta, theta_pickle_file)
+
+def momentum_gradient_descent(X, Y):
+	num_points_seen = 0
+	d_theta = init_d_theta()
+	update = init_d_theta()
+	max_epochs = 50
+	for i in range(max_epochs):
+		num_points_seen = 0
+		steps = 0
+		for x,y in zip(X,Y):
+			y_hat = forward_propagation(x)
+			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
+			num_points_seen += 1
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(update, momentum)
+	  			scalar_mul_theta(d_theta, lr)
+	  			add_and_set_theta(update, d_theta)
+	  			sub_and_set_theta(theta, update)
+	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % 100 == 0:
+		  			train_error, train_loss = calc_error_loss(X, Y)
+		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
+		pickle.dump(theta, theta_pickle_file)
+
+def nag_gradient_descent(X, Y):
+	num_points_seen = 0
+	d_theta = init_d_theta()
+	update = init_d_theta()
+	max_epochs = 50
+	for i in range(max_epochs):
+		num_points_seen = 0
+		steps = 0
+		for x,y in zip(X,Y):
+			if(num_points_seen % batch_size == 0):
+				scalar_mul_theta(update, momentum)
+				sub_and_set_theta(theta, update)				
+			y_hat = forward_propagation(x)
+			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
+			num_points_seen += 1
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(d_theta, lr)
+	  			sub_and_set_theta(theta, d_theta)
+	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % 100 == 0:
+		  			train_error, train_loss = calc_error_loss(X, Y)
+		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
+		pickle.dump(theta, theta_pickle_file)
+
+def adam_gradient_descent(X, Y):
+	num_points_seen = 0
+	beta_1, beta_2, epsilon = 0.9, 0.999, 1e-8
+	d_theta = init_d_theta()
+	update = init_d_theta()
+	decay = init_adam_factors()
+	factors = init_adam_factors()
+	max_epochs = 50
+	for i in range(max_epochs):
+		num_points_seen = 0
+		steps = 0
+		for x,y in zip(X,Y):
+			y_hat = forward_propagation(x)
+			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
+			num_points_seen += 1
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(decay, beta_2)
+	  			update_adam_factors(d_theta, factors)
+	  			scalar_mul_theta(factors, 1 - beta_2)
+	  			add_and_set_theta(decay, factors)
+	  			
+	  			scalar_mul_theta(update, beta_1)
+	  			scalar_mul_theta(d_theta, 1 - beta_1)
+	  			add_and_set_theta(update, d_theta)
+
+	  			steps += 1
+
+	  			scalar_mul_theta(update, (1.0 / (1.0 - math.pow(beta_1, steps))))
+	  			scalar_mul_theta(decay, (1.0 / (1.0 - math.pow(beta_2, steps))))
+
+	  			adam_decay_scale(update, decay, epsilon)
+	  			scalar_mul_theta(update, lr)
+	  			sub_and_set_theta(theta, update)
+	  			
 	  			scalar_mul_theta(d_theta, 0)
 		  		if steps % 100 == 0:
 		  			train_error, train_loss = calc_error_loss(X, Y)
