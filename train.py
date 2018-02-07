@@ -42,6 +42,8 @@ train_path = 'train.csv'
 test_path = 'test.csv'
 # path to validation dataset
 val_path = ''
+# log frequency (steps)
+log_frequency = 100
 
 # neural network parameters
 W_layer = [-1]
@@ -60,6 +62,8 @@ def main():
 	t_df = pd.read_csv(train_path)
 	t_df.set_index('id', inplace=True)
 	num_features = len(t_df.columns)-1
+	# import pdb
+	# pdb.set_trace()
 	# normalize between 0 and 1
 	t_df.iloc[:, 0:num_features] /= 255.0
 	X = t_df.iloc[:, 0:num_features].as_matrix()
@@ -265,6 +269,9 @@ def softmax(x):
 
 def calc_error_loss(X, Y):
 	num_samples, num_correct, loss = X.shape[0], 0, 0
+	true_positive_count = np.zeros(10)
+	false_positive_count = np.zeros(10)
+	false_negative_count = np.zeros(10)
 	for x, y in zip(X, Y):
 		y_hat = forward_propagation(x)
 		loss += get_loss(y_hat, y)
@@ -272,7 +279,19 @@ def calc_error_loss(X, Y):
 		pred_class = np.argmax(y_hat)
 		if (true_class == pred_class):
 			num_correct += 1
-	return ((num_samples-num_correct) * 1.0/num_samples, loss * 1.0/num_samples)
+			true_positive_count[true_class] += 1
+		else:
+			false_negative_count[true_class] += 1
+			false_positive_count[pred_class] += 1
+
+	sum_tp = true_positive_count.sum()
+	sum_fp = false_positive_count.sum()
+	sum_fn = false_negative_count.sum()
+	precision = sum_tp/(sum_tp + sum_fp)
+	recall = sum_tp/(sum_tp + sum_fn)
+	mean_f_score = 2*precision*recall/(precision+recall)
+
+	return ((num_samples-num_correct) * 1.0/num_samples, loss * 1.0/num_samples, mean_f_score)
 
 def init_theta():
 	theta = []
@@ -289,19 +308,10 @@ def init_d_theta():
 		d_theta[1].append(np.zeros(B_layer[j].shape))
 	return d_theta
 
-def init_adam_factors():
-	factors = [[], []]
-	for i in range(2):
-		factors[i].append(-1)
-	for j in xrange(1, L+1):
-		factors[0].append(0)
-		factors[1].append(0)
-	return factors
-
 def update_adam_factors(d_theta, factors):
 	for i in range(2):
 		for j in xrange(1, len(d_theta[i])):
-			factors[i][j] = np.square(d_theta[i][j]).sum()
+			factors[i][j] = np.square(d_theta[i][j])
 
 def add_and_set_theta(theta1, theta2):
 	for i in range(2):
@@ -321,7 +331,7 @@ def scalar_mul_theta(theta, a):
 def adam_decay_scale(update, decay, epsilon):
 	for i in range(2):
 		for j in xrange(1, len(update[i])):
-			update[i][j] *= ( 1.0 / np.sqrt( epsilon + decay[i][j] ) );
+			update[i][j] *= ( 1.0 / np.sqrt( epsilon + decay[i][j] ) )
 
 def do_mini_batch_gradient_descent(X, Y):
 	num_points_seen = 0
@@ -340,9 +350,9 @@ def do_mini_batch_gradient_descent(X, Y):
 	  			sub_and_set_theta(theta, d_theta)
 	  			steps += 1
 	  			scalar_mul_theta(d_theta, 0)
-		  		if steps % 100 == 0:
-		  			train_error, train_loss = calc_error_loss(X, Y)
-		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
 		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
 		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
 		pickle.dump(theta, theta_pickle_file)
@@ -367,9 +377,9 @@ def momentum_gradient_descent(X, Y):
 	  			sub_and_set_theta(theta, update)
 	  			steps += 1
 	  			scalar_mul_theta(d_theta, 0)
-		  		if steps % 100 == 0:
-		  			train_error, train_loss = calc_error_loss(X, Y)
-		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
 		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
 		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
 		pickle.dump(theta, theta_pickle_file)
@@ -392,12 +402,13 @@ def nag_gradient_descent(X, Y):
 	  		if(num_points_seen % batch_size == 0):
 	  			# seen one mini batch
 	  			scalar_mul_theta(d_theta, lr)
+	  			add_and_set_theta(update, d_theta)
 	  			sub_and_set_theta(theta, d_theta)
 	  			steps += 1
 	  			scalar_mul_theta(d_theta, 0)
-		  		if steps % 100 == 0:
-		  			train_error, train_loss = calc_error_loss(X, Y)
-		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
 		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
 		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
 		pickle.dump(theta, theta_pickle_file)
@@ -407,8 +418,8 @@ def adam_gradient_descent(X, Y):
 	beta_1, beta_2, epsilon = 0.9, 0.999, 1e-8
 	d_theta = init_d_theta()
 	update = init_d_theta()
-	decay = init_adam_factors()
-	factors = init_adam_factors()
+	decay = init_d_theta()
+	factors = init_d_theta()
 	max_epochs = 50
 	for i in range(max_epochs):
 		num_points_seen = 0
@@ -438,9 +449,9 @@ def adam_gradient_descent(X, Y):
 	  			sub_and_set_theta(theta, update)
 	  			
 	  			scalar_mul_theta(d_theta, 0)
-		  		if steps % 100 == 0:
-		  			train_error, train_loss = calc_error_loss(X, Y)
-		  			val_error, val_loss = calc_error_loss(X_val, Y_val)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
 		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, train_loss, train_error, lr))
 		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}\n".format(i, steps, val_loss, val_error, lr))
 		pickle.dump(theta, theta_pickle_file)
@@ -455,7 +466,7 @@ def forward_propagation(x):
 	y_hat = softmax(A_layer[L]) 
 	return y_hat
 
-# TODO: find gradients for squared error
+# TODO: find gradients for squared error - Done. Verify.
 def backward_propagation(y, y_hat):
 	d_H = [-1]
 	d_A = [-1]
@@ -471,7 +482,13 @@ def backward_propagation(y, y_hat):
 		d_W.append(np.zeros(W_layer[i].shape))
 	
 	# Output gradient computation
-	d_A[L] = -(y - y_hat)
+	if(loss == 'ce')
+		d_A[L] = -(y - y_hat)
+	else:
+		temp_1 = 2 * y_hat
+		temp_2 = y_hat - y + ( ( y_hat[np.argmax(y)] - np.square(y_hat).sum() ) * np.ones(10) )
+		d_A[L] = temp_1 * temp_2
+
 	for k in xrange(L, 0, -1):
 		# Parameter gradient computation
 		d_W[k] = np.matmul(d_A[k], H_layer[k-1].transpose())
