@@ -35,8 +35,6 @@ batch_size = 20
 anneal = False
 # model save directory
 save_dir = '/pa1'
-# save all thetas?
-save_all_thetas = True
 # log save directory
 expt_dir = '/pa1/exp'
 # path to train dataset
@@ -46,15 +44,13 @@ test_path = 'test.csv'
 # path to validation dataset
 val_path = ''
 # log frequency (steps)
-log_frequency = 100
+log_frequency = 1375
 # max epochs
-max_epochs = 50
+max_epochs = 60
 # anneal type
 anneal_type = "val"
 # anneal lr threshold
-anneal_threshold = 4e-8
-# regularization parameter
-regularization = 1e-4
+anneal_threshold = 1e-8
 
 # neural network parameters
 W_layer = [-1]
@@ -115,10 +111,8 @@ def main():
 	# Use Xavier Glorot init for Weights - zero mean, suitable variance?
 	for i in xrange(1, L+1):
 		root = np.sqrt(6/(sizes[i] + sizes[i-1]))
-		if(opt == 'adam'):
-			W_layer.append(np.random.uniform(-1*root, root,[sizes[i],sizes[i-1]]))
-		else:
-			W_layer.append(np.random.randn(sizes[i],sizes[i-1]))
+		W_layer.append(np.random.uniform(-1*root, root,[sizes[i],sizes[i-1]]))
+		# W_layer.append(np.random.randn(sizes[i],sizes[i-1]))
 	# Initialize bias as zeros
 	for i in xrange(1, L+1):
 		# B_layer.append(np.zeros([sizes[i],1]))
@@ -152,14 +146,6 @@ def main():
 	theta_pickle_file.close()
 
 
-def make_dir(dir_path):
-	if not os.path.exists(dir_path):
-		try:
-			os.makedirs(dir_path)
-		except OSError as exc: # Guard against race condition
-			if exc.errno != errno.EEXIST:
-				raise
-
 if __name__ == "__main__":
 	# Initialize the parser
 	parser = argparse.ArgumentParser()
@@ -177,12 +163,7 @@ if __name__ == "__main__":
 	parser.add_argument("--train", help="train path")
 	parser.add_argument("--test", help="test path")
 	parser.add_argument("--val", help="validation path")
-	parser.add_argument('--save_all_thetas', dest='save_all_thetas', action='store_true')
-	parser.add_argument('--no-save_all_thetas', dest='save_all_thetas', action='store_false')
-	parser.set_defaults(save_all_thetas=True)
-	
 	args = parser.parse_args()
-	save_all_thetas = args.save_all_thetas
 
 	# Process the command line arguments
 	if(args.lr):
@@ -201,7 +182,7 @@ if __name__ == "__main__":
 		sizes.append(10)
 	if(args.activation):
 		activation = str(args.activation)
-		options = sets.Set(['sigmoid','tanh','relu','elu'])
+		options = sets.Set(['sigmoid','tanh','relu'])
 		if(activation not in options):
 			print('Invalid activation function')
 			exit()
@@ -227,10 +208,8 @@ if __name__ == "__main__":
 			anneal = True
 	if(args.save_dir):
 		save_dir = str(args.save_dir)
-		make_dir(save_dir)
 	if(args.expt_dir):
 		expt_dir = str(args.expt_dir)
-		make_dir(expt_dir)
 	if(args.train):
 		train_path = str(args.train)
 	if(args.test):
@@ -255,7 +234,6 @@ def print_params():
 	print("train_path: {}".format(train_path))
 	print("test_path: {}".format(test_path))
 	print("val_path: {}".format(val_path))
-	print("save_all_thetas: {}".format(save_all_thetas))
 
 def cross_entropy_loss(y_hat, y):
 	return -1 * np.log2(y_hat[np.argmax(y)])[0]
@@ -295,19 +273,11 @@ def relu(x):
 def relu_der(x):
 	return ( (x*(x>0)) / (x+(x==0)) )
 
-def elu(x):
-	return  x*(x >= 0) + (np.exp(x) - 1)*(x < 0)
-
-def elu_der(x):
-	return (x >= 0) + (x < 0)*(np.exp(x))
-
 def activation_func(x):
 	if(activation == 'sigmoid'):
 		return sigmoid(x)
 	elif(activation == 'relu'):
 		return relu(x)
-	elif(activation == 'elu'):
-		return elu(x)
 	else:
 		return tanh(x)
 
@@ -316,8 +286,6 @@ def activation_der(x):
 		return sigmoid_der(x)
 	elif(activation == 'relu'):
 		return relu_der(x)
-	elif(activation == 'elu'):
-		return elu_der(x)
 	else:
 		return tanh_der(x)
 
@@ -403,6 +371,11 @@ def adam_decay_scale(m_t, v_t, epsilon):
 		for j in xrange(1, len(m_t[i])):
 			m_t[i][j] *= ( 1.0 / np.sqrt( epsilon + v_t[i][j] ) )
 
+def save_theta(theta, theta_pickle_file):
+	pickle.dump(theta, theta_pickle_file)
+	theta_pickle_file.close()
+	# TODO
+
 def do_mini_batch_gradient_descent(X, Y):
 	d_theta = init_d_theta()
 	prev_epoch_val_loss = float('inf')
@@ -411,12 +384,6 @@ def do_mini_batch_gradient_descent(X, Y):
 	val_loss = 1
 	train_loss = 1
 	i = 0
-	prev_i = -1
-	counter = 1
-
-	best_theta = []
-	best_val_score = 0
-
 	global lr
 	while i < max_epochs:
 		X,Y = sk.shuffle(X,Y)
@@ -426,28 +393,18 @@ def do_mini_batch_gradient_descent(X, Y):
 			y_hat = forward_propagation(x)
 			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
 			num_points_seen += 1
-			if(num_points_seen % batch_size == 0):
-				# seen one mini batch
-				scalar_mul_theta(d_theta, lr)
-				sub_and_set_theta(theta, d_theta)
-				steps += 1
-				scalar_mul_theta(d_theta, 0)
-				if steps % log_frequency == 0:
-					prev_i = i
-					train_error, train_loss, train_score = calc_error_loss(X, Y)
-					val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
-					if val_score > best_val_score:
-						best_theta = theta
-						best_theta_pickle_file = open(os.path.join(save_dir, "best_theta.pickle"), "w")
-						pickle.dump(best_theta, best_theta_pickle_file)
-						best_theta_pickle_file.close()
-						best_val_score = val_score
-
-					log_train_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, train_loss, train_error, lr, train_score))
-					log_val_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, val_loss, val_error, lr, val_score))
-					counter += 1
-		if save_all_thetas:
-			pickle.dump(theta, theta_pickle_file)
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(d_theta, lr)
+	  			sub_and_set_theta(theta, d_theta)
+	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, train_loss, train_error, lr, train_score))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, val_loss, val_error, lr, val_score))
+		pickle.dump(theta, theta_pickle_file)
 
 		repeat_epoch = False
 		if anneal_type == "val":
@@ -474,16 +431,9 @@ def momentum_gradient_descent(X, Y):
 	prev_epoch_val_loss = float('inf')
 	prev_epoch_train_loss = float('inf')
 	prev_epoch_theta = []
-	prev_update = []
 	val_loss = 1
 	train_loss = 1
 	i = 0
-	prev_i = -1
-	counter = 1
-
-	best_theta = []
-	best_val_score = 0
-
 	global lr
 	while i < max_epochs:
 		X,Y = sk.shuffle(X,Y)
@@ -493,30 +443,20 @@ def momentum_gradient_descent(X, Y):
 			y_hat = forward_propagation(x)
 			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
 			num_points_seen += 1
-			if(num_points_seen % batch_size == 0):
-				# seen one mini batch
-				scalar_mul_theta(update, momentum)
-				scalar_mul_theta(d_theta, lr)
-				add_and_set_theta(update, d_theta)
-				sub_and_set_theta(theta, update)
-				steps += 1
-				scalar_mul_theta(d_theta, 0)
-				if steps % log_frequency == 0:
-					prev_i = i
-					train_error, train_loss, train_score = calc_error_loss(X, Y)
-					val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
-					if val_score > best_val_score:
-						best_theta = theta
-						best_theta_pickle_file = open(os.path.join(save_dir, "best_theta.pickle"), "w")
-						pickle.dump(best_theta, best_theta_pickle_file)
-						best_theta_pickle_file.close()
-						best_val_score = val_score
-
-					log_train_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, train_loss, train_error, lr, train_score))
-					log_val_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, val_loss, val_error, lr, val_score))
-					counter += 1
-		if save_all_thetas:
-			pickle.dump(theta, theta_pickle_file)
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(update, momentum)
+	  			scalar_mul_theta(d_theta, lr)
+	  			add_and_set_theta(update, d_theta)
+	  			sub_and_set_theta(theta, update)
+	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, train_loss, train_error, lr, train_score))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, val_loss, val_error, lr, val_score))
+		pickle.dump(theta, theta_pickle_file)
 
 		repeat_epoch = False
 		if anneal_type == "val":
@@ -526,14 +466,12 @@ def momentum_gradient_descent(X, Y):
 		
 		if (anneal == True) and repeat_epoch:
 			copy_to_theta(theta, prev_epoch_theta)
-			copy_to_theta(update, prev_update)
 			if (lr < anneal_threshold):
 				return;
 			lr /= 2
 		else:
 			if (anneal == True):
 				prev_epoch_theta = copy.deepcopy(theta)
-				prev_update = copy.deepcopy(update)
 				prev_epoch_train_loss = train_loss
 				prev_epoch_val_loss = val_loss
 			i += 1
@@ -545,16 +483,9 @@ def nag_gradient_descent(X, Y):
 	prev_epoch_val_loss = float('inf')
 	prev_epoch_train_loss = float('inf')
 	prev_epoch_theta = []
-	prev_update = []
 	val_loss = 1
 	train_loss = 1
-	counter = 1
-
-	best_theta = []
-	best_val_score = 0
-
 	i = 0
-	prev_i = -1
 	global lr
 	while i < max_epochs:
 		X,Y = sk.shuffle(X,Y)
@@ -567,29 +498,19 @@ def nag_gradient_descent(X, Y):
 			y_hat = forward_propagation(x)
 			add_and_set_theta(d_theta, backward_propagation(y, y_hat))
 			num_points_seen += 1
-			if(num_points_seen % batch_size == 0):
-				# seen one mini batch
-				scalar_mul_theta(d_theta, lr)
-				add_and_set_theta(update, d_theta)
-				sub_and_set_theta(theta, d_theta)
-				steps += 1
-				scalar_mul_theta(d_theta, 0)
-				if steps % log_frequency == 0:
-					prev_i = i
-					train_error, train_loss, train_score = calc_error_loss(X, Y)
-					val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
-					if val_score > best_val_score:
-						best_theta = theta
-						best_theta_pickle_file = open(os.path.join(save_dir, "best_theta.pickle"), "w")
-						pickle.dump(best_theta, best_theta_pickle_file)
-						best_theta_pickle_file.close()
-						best_val_score = val_score
-
-					log_train_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, train_loss, train_error, lr, train_score))
-					log_val_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps, val_loss, val_error, lr, val_score))
-					counter += 1
-		if save_all_thetas:
-			pickle.dump(theta, theta_pickle_file)
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(d_theta, lr)
+	  			add_and_set_theta(update, d_theta)
+	  			sub_and_set_theta(theta, d_theta)
+	  			steps += 1
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, train_loss, train_error, lr, train_score))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps, val_loss, val_error, lr, val_score))
+		pickle.dump(theta, theta_pickle_file)
 
 		repeat_epoch = False
 		if anneal_type == "val":
@@ -599,14 +520,12 @@ def nag_gradient_descent(X, Y):
 		
 		if (anneal == True) and repeat_epoch:
 			copy_to_theta(theta, prev_epoch_theta)
-			copy_to_theta(update, prev_update)
 			if (lr < anneal_threshold):
 				return;
 			lr /= 2
 		else:
 			if (anneal == True):
 				prev_epoch_theta = copy.deepcopy(theta)
-				prev_update = copy.deepcopy(update)
 				prev_epoch_train_loss = train_loss
 				prev_epoch_val_loss = val_loss
 			i += 1
@@ -625,14 +544,7 @@ def adam_gradient_descent(X, Y):
 	prev_v_t = []
 	val_loss = 1
 	train_loss = 1
-
-	best_theta = []
-	best_val_score = 0
-
-	counter = 1
-
 	i = 0
-	prev_i = -1
 	global lr
 	steps = 0
 	prev_steps = 0
@@ -645,48 +557,36 @@ def adam_gradient_descent(X, Y):
 			y_hat = forward_propagation_with_dropouts(x, masks)
 			add_and_set_theta(d_theta, backward_propagation_with_dropouts(y, y_hat, masks))
 			num_points_seen += 1
-			if(num_points_seen % batch_size == 0):
-				# seen one mini batch
-				scalar_mul_theta(v_t, beta_2)
-				update_adam_factors(d_theta, d_theta_sq)
-				scalar_mul_theta(d_theta_sq, 1 - beta_2)
-				add_and_set_theta(v_t, d_theta_sq)
-				
-				scalar_mul_theta(m_t, beta_1)
-				scalar_mul_theta(d_theta, 1 - beta_1)
-				add_and_set_theta(m_t, d_theta)
+	  		if(num_points_seen % batch_size == 0):
+	  			# seen one mini batch
+	  			scalar_mul_theta(v_t, beta_2)
+	  			update_adam_factors(d_theta, d_theta_sq)
+	  			scalar_mul_theta(d_theta_sq, 1 - beta_2)
+	  			add_and_set_theta(v_t, d_theta_sq)
+	  			
+	  			scalar_mul_theta(m_t, beta_1)
+	  			scalar_mul_theta(d_theta, 1 - beta_1)
+	  			add_and_set_theta(m_t, d_theta)
 
-				steps += 1
-				steps_print += 1
-				temp_m_t = copy.deepcopy(m_t)
-				temp_v_t = copy.deepcopy(v_t)
+	  			steps += 1
+	  			steps_print += 1
+	  			temp_m_t = copy.deepcopy(m_t)
+	  			temp_v_t = copy.deepcopy(v_t)
 
-				scalar_mul_theta(temp_m_t, (1.0 / (1.0 - np.power(beta_1, steps))))
-				scalar_mul_theta(temp_v_t, (1.0 / (1.0 - np.power(beta_2, steps))))
+	  			scalar_mul_theta(temp_m_t, (1.0 / (1.0 - np.power(beta_1, steps))))
+	  			scalar_mul_theta(temp_v_t, (1.0 / (1.0 - np.power(beta_2, steps))))
 
-				adam_decay_scale(temp_m_t, temp_v_t, epsilon)
-				scalar_mul_theta(temp_m_t, lr)
-				sub_and_set_theta(theta, temp_m_t)
-				
-				scalar_mul_theta(d_theta, 0)
-				if steps % log_frequency == 0:
-					prev_i = i
-					train_error, train_loss, train_score = calc_error_loss(X, Y)
-					val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
-
-					if val_score > best_val_score:
-						best_theta = theta
-						best_theta_pickle_file = open(os.path.join(save_dir, "best_theta.pickle"), "w")
-						pickle.dump(best_theta, best_theta_pickle_file)
-						best_theta_pickle_file.close()
-						best_val_score = val_score
-
-					log_train_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps_print, train_loss, train_error, lr, train_score))
-					log_val_file.write("{}: Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(counter, i, steps_print, val_loss, val_error, lr, val_score))
-					counter += 1
-		
-		if save_all_thetas:
-			pickle.dump(theta, theta_pickle_file)
+	  			adam_decay_scale(temp_m_t, temp_v_t, epsilon)
+	  			scalar_mul_theta(temp_m_t, lr)
+	  			sub_and_set_theta(theta, temp_m_t)
+	  			
+	  			scalar_mul_theta(d_theta, 0)
+		  		if steps % log_frequency == 0:
+		  			train_error, train_loss, train_score = calc_error_loss(X, Y)
+		  			val_error, val_loss, val_score = calc_error_loss(X_val, Y_val)
+		  			log_train_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps_print, train_loss, train_error, lr, train_score))
+		  			log_val_file.write("Epoch {}, Step {}, Loss: {}, Error: {}, lr: {}, score: {}\n".format(i, steps_print, val_loss, val_error, lr, val_score))
+		pickle.dump(theta, theta_pickle_file)
 
 		repeat_epoch = False
 		if anneal_type == "val":
@@ -723,7 +623,7 @@ def forward_propagation(x):
 	return y_hat
 
 def forward_propagation_with_dropouts(x, masks):
-	p = 0.92
+	p = 0.85	
 	H_layer[0] = x
 	for i in xrange(1, L):
 		A_layer[i] = B_layer[i] + np.matmul(W_layer[i], H_layer[i-1])
@@ -804,9 +704,7 @@ def backward_propagation_with_dropouts(y, y_hat, masks):
 
 	for k in xrange(L, 0, -1):
 		# Parameter gradient computation
-		d_W[k] = np.matmul(d_A[k], H_layer[k-1].transpose()) + 2*regularization*W_layer[k]
-
-		# no need to regularize bias parameters: http://cs231n.github.io/neural-networks-2/#reg
+		d_W[k] = np.matmul(d_A[k], H_layer[k-1].transpose())
 		d_B[k] = d_A[k]
 
 		# Means we have already computed till W[1] and B[1]
